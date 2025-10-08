@@ -5,7 +5,7 @@ import torch
 from torch.func import jacrev, jacfwd, hessian, vjp
 from tqdm import tqdm
 
-def inv_ref(M: torch.Tensor, eps: float) -> torch.Tensor:
+def inv_reg(M: torch.Tensor, eps: float) -> torch.Tensor:
     #better than torch.linalg.inv because sometimes some metrics can not be inv directly
     #(M + eps * I) ^ (-1)
     #M is the metrix(d,d)
@@ -97,6 +97,7 @@ class DDP:
 
     def _fx_fu_at(self, t_idx, x_t : torch.Tensor, u_t:Tensor):
         """
+        dynamic jacobian: forward process to update states
         we want to get fx, fu of timestamp t:
             fx = ∂f/∂x  (d_s, d_s), how the state affect the next state
             fu = ∂f/∂u  (d_s, d_u), how the control affect the next state
@@ -115,7 +116,7 @@ class DDP:
         return fx, fu
 
 
-        def use_running_derives_at(self, t_idx, x_t : torch.Tensor, u_t:Tensor):
+        def _running_cost_derivs_at(self, t_idx, x_t : torch.Tensor, u_t:Tensor):
             """
             get derivative of running cost at each state:
                 gx  = ∂g/∂x   (d_s, 1)
@@ -138,15 +139,159 @@ class DDP:
                 
                 return v.squeeze()
 
-            lx = jacrev(g_on_vecs, argnums=0)(x_t.squeeze(0), u_t.squeeze(0)).reshape(-1, 1)
-            lu = jacrev(g_on_vecs, argnums=1)(x_t.squeeze(0), u_t.squeeze(0)).reshape(-1, 1)
+            gx = jacrev(g_on_vecs, argnums=0)(x_t.squeeze(0), u_t.squeeze(0)).reshape(-1, 1)
+            gu = jacrev(g_on_vecs, argnums=1)(x_t.squeeze(0), u_t.squeeze(0)).reshape(-1, 1)
 
-            lxx = jacfwd(jacrev(g_on_vecs, argnums=0), argnums=0)(x_t.squeeze(0), u_t.squeeze(0))
-            luu = jacfwd(jacrev(g_on_vecs, argnums=1), argnums=1)(x_t.squeeze(0), u_t.squeeze(0))
+            gxx = jacfwd(jacrev(g_on_vecs, argnums=0), argnums=0)(x_t.squeeze(0), u_t.squeeze(0))
+            guu = jacfwd(jacrev(g_on_vecs, argnums=1), argnums=1)(x_t.squeeze(0), u_t.squeeze(0))
 
-            lxu = jacfwd(jacrev(g_on_vecs, argnums=1), argnums=0)(x_t.squeeze(0), u_t.squeeze(0))
-            lux = jacfwd(jacrev(g_on_vecs, argnums=0), argnums=1)(x_t.squeeze(0), u_t.squeeze(0))
+            gxu = jacfwd(jacrev(g_on_vecs, argnums=1), argnums=0)(x_t.squeeze(0), u_t.squeeze(0))
+            gux = jacfwd(jacrev(g_on_vecs, argnums=0), argnums=1)(x_t.squeeze(0), u_t.squeeze(0))
 
-            return lx, lu, lxx, luu, lxu, lux
+            return gx, gu, gxx, guu, gxu, gux
+
+
+        def _terminal_Vx_Vxx(self, x_T: torch.Tensor):
+            """
+            x_T: the final state we forward rollout. (1, ds)
+            get gradient and hessian of terminal value at the final state:
+            Vx  = ∂h/∂x (d_s,1)
+            Vxx = ∂²h/∂x² (d_s,d_s)
+            """
+            def h_ov_vec(x_vec):
+                return self.env.terminal_cost(x_vec.unsqueeze(0)).squeeze()
+
+            vx = jacrev(h_ov_vec)(x_T.squeeze(0)).reshape(-1, 1) # (d_s,1)
+
+            vxx = hessian(h_ov_vec)(x_T.squeeze(0)) # (d_s,d_s)
+
+            return vx, vxx
+
+        
+
+        def compute_gradients(self, states, actions):
+            """
+            this is used for get the cost of states from back,
+            and compute corecction of u
+            states:[x₀, x₁, …, x_T]
+            actions:[u₀, u₁, …, u_{T-1}]
+
+            return ks, Ks
+            """
+
+            T = actions.shape[0] + 1
+            d_s = self.env.state_dim
+            d_u = self.env.control_dim
+
+            vx, vxx = self._terminal_Vx_Vxx(states[-1].reshape(1, d_s))
+
+            #prepare to store the k_t and K_t at each timestamp
+            ks = [None] * (T - 1)
+            Ks = [None] * (T - 1)
+
+            for t in reversed(range(T - 1)):
+                x_t = states[t].reshape(1, d_s)
+                u_t = controls[t].reshape(1, d_u)
+
+                fx, fu = self._fx_fu_at(t, x_t, u_t)
+
+                gx, gu, gxx, guu, gxu, gux = self._running_cost_derivs_at(t, x_t, u_t)
+
+                Qxx = gxx + fx.T @ vxx @ fx
+                Quu = guu + fu.T @ vxx @ fu
+                Qux = gux + fu.T @ vxx @ fx
+                Qxu = gxu + fx.T @ vxx @ fu
+
+                def step_on_vec(x_vec, u_vec):
+                    return self.env.step(self.env.timesteps[t], x_vec.unsqueeze(0), u_vec.unsqueeze(0)).squeeze(0)
+                _, vjp_fun = vjp(step_on_vec, x_t.squeeze(0), u_t.squeeze(0))
+                fxT_Vx, fuT_Vx = vjp_fun(vx.squeeze(1))
+                
+                Qx = gx + fxT_Vx.reshape(d_s, 1)# Qx​=gx​+fxT​Vx′
+
+                Qu = gu + fuT_Vx.reshape(d_u, 1)# Qu​=gu​+fuT​Vx′​
+
+                Quu_inv = inv_reg(Quu, eps)
+
+                k = - Quu_inv @ Qu
+                K = - 0.5 * Quu_inv @ (Qxu.T + Qux)
+
+                # update
+                vx  = Qx  - K.T @ Quu @ k
+                vxx = Qxx - K.T @ Quu @ K
+
+                ks[t] = k.detach()
+                Ks[t] = K.detach()
+        ks = torch.stack(ks) # (T-1, d_u, 1)
+        Ks = torch.stack(Ks) # (T-1, d_u, d_s)
+        return ks, Ks
+
+
+
+    def update_actions(self, states, actions, ks, Ks, iter_num, num_tries = 20):
+        """
+        forward update new state and new control
+        """
+
+        cur_state = states[0].reshape(1, -1)
+        run_cost, ter_cost = self.get_cost(states, actions)
+        orig_cost = run_cost + ter_cost
+
+
+        alpha = 1.0
+
+        for _ in range(num_tries):
+
+            new_states = [cur_state]
+            cand_actions = []
+
+            for t, x_nom. u_nom, k, K, in zip(self.env.timesteps[:-1], states, actions, ks, Ks):
+                x_nom = x_nom.reshape(1, -1)
+
+                res = new_states[-1] - x_nom  # (1, d_s) δxt​=xt​−xtnom​
+                u_new = (u_nom.reshape(-1,1) + alpha*k + K @ res.T).T.reshape(1, -1)
+                x_next = self.env.step(t, new_states[-1], u_new)
+
+                new_states.append(x_next)
+                cand_actions.append(u_new)
+
+
+            cand_actions = torch.cat(cand_actions, dim=0)  # (T-1, d_u)
+            cand_states  = torch.stack(new_states, dim=0)  # (T, 1, d_s)
+
+            run_cost, ter_cost = self.get_cost(cand_states, cand_actions)
+            cand_cost = run_cost + ter_cost
+
+            if cand_cost < orig_cost:
+                self.eps *= self.success_multiplier
+                return cand_states, cand_actions
+
+            alpha *= 0.5
+            self.eps = max(self.eps * self.failure_multiplier, self.min_eps)
+            if self.verbose:
+                print(f"[DDP] line-search failed, eps={self.eps:.3e}")
+            return states, actions
+
+
+        def iterate(self, init_state, actions, iter_num, states = None):
+            """
+            The first time outside loop: we only have sequence of control first
+            so we need to get a sequence of states
+            and then backward to get k, K, and update the new controls and new states
+            """
+            with torch.no_grad():
+            self.eps = float(np.clip(self.eps, a_min=self.min_eps, a_max=np.inf))
+            
+            if states is None:
+                seq = [init_state.reshape(1, -1)]
+                for t, u in zip(self.env.timesteps[:-1], actions):
+                    nxt = self.env.step(t, seq[-1], u.reshape(1, -1))
+                    seq.append(nxt)
+                states = torch.stack(seq, dim=0)  # (T,1,d_s)
+
+            ks, Ks = self.compute_gradients(states, actions)
+            states, actions = self.update_actions(states, actions, ks, Ks, iter_num=iter_num)
+            return states.detach(), actions.detach()
+
 
 
