@@ -31,15 +31,15 @@ class CartPoleEnv:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
 
-        # Required by your DDP class
+        #ddp required
         self.state_dim = 4
         self.control_dim = 1
         self.timesteps = torch.arange(self.num_steps, device=self.device, dtype=self.dtype)
 
-        # Goal state: upright, centered, zero velocities
+        #Goal state: upright, centered, zero velocities
         self.x_goal = torch.tensor([[0.0, 0.0, 0.0, 0.0]], device=self.device, dtype=self.dtype)
 
-        # Cost weights (same as in your Sympy reference)
+        #Cost weights (same as in your Sympy reference)
         Q = torch.eye(4, device=self.device, dtype=self.dtype)
         Q[1, 1] = 0.0  # no cost on x_dot
         Q[3, 3] = 0.0  # no cost on theta_dot
@@ -47,7 +47,7 @@ class CartPoleEnv:
         self.R = 0.1 * torch.eye(1, device=self.device, dtype=self.dtype)
         self.Qf = 100.0 * torch.eye(4, device=self.device, dtype=self.dtype)
 
-    # ---------- running costs ----------
+    # running costs
     def running_state_cost(self, t, x, u):
         err = x - self.x_goal
         return err @ self.Q @ err.transpose(0, 1)
@@ -55,12 +55,12 @@ class CartPoleEnv:
     def running_control_cost(self, t, x, u):
         return u @ self.R @ u.transpose(0, 1)
 
-    # ---------- terminal cost ----------
+    # terminal cost
     def terminal_cost(self, x_T):
         err = x_T - self.x_goal
         return err @ self.Qf @ err.transpose(0, 1)
 
-    # ---------- dynamics ----------
+    # dynamics
     def step(self, t, x, u):
         # x = [x, x_dot, theta, theta_dot]
         x_pos = x[:, 0:1]
@@ -87,7 +87,7 @@ class CartPoleEnv:
         ], dim=1)
         return x_next
 
-    # ---------- visualization ----------
+    #visualization
     def render_state(self, x, ax=None):
         if isinstance(x, torch.Tensor):
             x = x.detach().cpu().numpy().flatten()
@@ -135,7 +135,7 @@ class CartPoleEnv:
         plt.close(fig)
         print(f"[Render] Saved GIF → {filename}")
 
-    # ---------- rollout ----------
+    # rollout
     def simulate(self, x0, policy_fn):
         x = x0.clone()
         traj = [x.clone()]
