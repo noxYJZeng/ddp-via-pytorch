@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.func import jacrev, jacfwd, hessian, vjp
 from tqdm import tqdm
+from typing import Optional
 
 def inv_reg(M: torch.Tensor, eps: float) -> torch.Tensor:
     #better than torch.linalg.inv because sometimes some metrics can not be inv directly
@@ -25,7 +26,7 @@ class DDP:
                  min_eps: float = 1e-8,
                  verbose: int = 1,
                  use_running_state_cost: bool = True,
-                 seed: int | None = None):
+                 seed: Optional[int] = None):
 
         self.env = env
         self.eps = float(eps)

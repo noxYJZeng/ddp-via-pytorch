@@ -1,25 +1,21 @@
 import math
 import torch
 from cartpole import CartPoleEnv
-from ddp import DDP
+from ddp import DDP  # your existing DDP class
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Environment: energy-shaped running cost + soft barrier, NO terminal cost
     env = CartPoleEnv(
-        num_steps=200,
-        dt=0.02,
-        u_max=2.0,
+        num_steps=300,
+        dt=0.05,
+        mp=0.1,
+        mc=1.0,
+        l=1.0,
+        G=9.80665,
         device=device,
-        q_theta=120.0,   # angle energy weight
-        q_thetad=2.0,    # angular rate
-        r_u=0.3,         # control effort
-        theta_fail=0.6,  # fail cone ~34°
-        w_fail=800.0,    # barrier strength
     )
 
-    # DDP solver (your DDP class)
     ddp = DDP(
         env,
         eps=1e-3,
@@ -31,18 +27,20 @@ if __name__ == "__main__":
         seed=0,
     )
 
-    # Start near-upright (DDP是局部法，给小扰动即可)
-    init = torch.tensor([[0.0, 0.0, -0.05, 0.0]], device=device)  # ~5.7°
+    # initial state: pole hanging down (theta = pi)
+    init = torch.tensor([[0.0, 0.0, math.pi, 0.0]], dtype=torch.float32, device=device)
 
-    actions, states = ddp.solve(init_state=init, num_iterations=25)
+    # run optimization
+    actions, states = ddp.solve(init_state=init, num_iterations=60)
     print("\n[DDP] Optimization done.")
     print("[Final theta (rad)]:", states[-1][0, 2].item())
 
-    # open-loop rollout with solved actions
+    # rollout and render
     def policy_fn(t, x):
         if t >= len(actions):
-            return torch.zeros((1, 1), device=device)
-        return actions[t].reshape(1, 1)
+            return torch.zeros((1, 1), device=device, dtype=torch.float32)
+        return actions[t].reshape(1, 1).to(device)
 
     traj = env.simulate(init, policy_fn)
-    env.save_gif(traj, filename="cartpole_keep_upright.gif", fps=30)
+
+
