@@ -68,8 +68,9 @@ class DDP:
             
             states, actions = self.iterate(init_state, actions, iter_num=it, states=states)
             end_states.append(states[-1].detach().cpu())
+
         
-        return actions.detach(), end_states
+        return actions.detach(), states
 
 
     def get_cost(self, states, actions):
@@ -197,6 +198,16 @@ class DDP:
             fx, fu = self._fx_fu_at(t, x_t, u_t)
             gx, gu, gxx, guu, gxu, gux = self._running_cost_derivs_at(t, x_t, u_t)
 
+            fx  = fx.reshape(d_s, d_s)
+            fu  = fu.reshape(d_s, d_u)
+            gxx = gxx.reshape(d_s, d_s)
+            guu = guu.reshape(d_u, d_u)
+            gxu = gxu.reshape(d_s, d_u)# ∂²g/∂x∂u  (d_s, d_u)
+            gux = gux.reshape(d_u, d_s)# ∂²g/∂u∂x  (d_u, d_s)
+            vx  = vx.reshape(d_s, 1)
+            vxx = vxx.reshape(d_s, d_s)
+
+
             Qxx = gxx + fx.T @ vxx @ fx
             Quu = guu + fu.T @ vxx @ fu
             Qux = gux + fu.T @ vxx @ fx
@@ -207,15 +218,16 @@ class DDP:
             _, vjp_fun = vjp(step_on_vec, x_t.squeeze(0), u_t.squeeze(0))
             fxT_Vx, fuT_Vx = vjp_fun(vx.squeeze(1))
             
-            Qx = gx + fxT_Vx.reshape(d_s, 1)  # Qx​=gx​+fxT​Vx′
-            Qu = gu + fuT_Vx.reshape(d_u, 1)  # Qu​=gu​+fuT​Vx′​
+            Qx = gx + fxT_Vx.reshape(d_s, 1)# Qx​=gx​+fxT​Vx′
+            Qu = gu + fuT_Vx.reshape(d_u, 1)# Qu​=gu​+fuT​Vx′​
 
             Quu_inv = inv_reg(Quu, self.eps)
 
             k = - Quu_inv @ Qu
-            K = - 0.5 * Quu_inv @ (Qxu.T + Qux)
+            K = - Quu_inv @ Qux
 
-            # update
+
+            #update
             vx  = Qx  - K.T @ Quu @ k
             vxx = Qxx - K.T @ Quu @ K
 
@@ -227,11 +239,10 @@ class DDP:
         return ks, Ks
 
 
-    def update_actions(self, states, actions, ks, Ks, iter_num, num_tries=20):
+    def update_actions(self, states, actions, ks, Ks, iter_num, num_tries=40):
         """
         forward update new state and new control
         """
-
         cur_state = states[0].reshape(1, -1)
         run_cost, ter_cost = self.get_cost(states, actions)
         orig_cost = run_cost + ter_cost
