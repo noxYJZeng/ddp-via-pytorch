@@ -7,7 +7,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = CartPoleEnv(
-        num_steps=200,
+        num_steps=400,
         dt=0.05,
         mp=0.1,
         mc=1.0,
