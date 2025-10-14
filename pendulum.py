@@ -136,7 +136,7 @@ class PendulumSmoothDDP:
             traj.append(x.clone())
         return traj
 
-    # ---------------- Visualization ----------------
+    # Visualization
     def render_state(self, x, ax=None):
         """
         Render the pendulum for a single state x = [sinθ, cosθ, θ̇].
@@ -154,6 +154,10 @@ class PendulumSmoothDDP:
         ax.set_xlim(-1.2 * self.L, 1.2 * self.L)
         ax.set_ylim(-1.2 * self.L, 1.2 * self.L)
         ax.set_aspect("equal")
+
+        ax.axhline(0, color="k", lw=1)
+        ax.axvline(0, color="k", lw=1)
+
         ax.plot([0, px], [0, py], color="tab:red", lw=3)
         ax.add_patch(patches.Circle((px, py), 0.05, fc="tab:blue"))
         ax.set_title(f"θ = {θ:+.2f} rad")
