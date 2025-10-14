@@ -129,3 +129,44 @@ if __name__ == "__main__":
     traj = [x for x in X]
     env.save_gif(traj, "pendulum_linear_theta.gif")
     print("Smooth swing-up achieved — linear θ state version.")
+
+
+"""
+Difference from the nonlinear (sinθ, cosθ, θ̇) version:
+-------------------------------------------------------
+
+This linear-θ variant represents the pendulum's state directly as [θ, θ̇]
+instead of using the trigonometric embedding [sinθ, cosθ, θ̇].
+Both formulations describe the same physical system, but their numerical
+and optimization behaviors differ:
+
+1. **State Representation**
+   - Linear version uses raw angle θ, which is intuitive and low-dimensional (2-D).
+   - Nonlinear version encodes sinθ and cosθ to avoid discontinuities at ±π.
+
+2. **Angle Discontinuity**
+   - In the linear form, θ wraps around at ±π, which can cause jumps in value
+     if the pendulum spins more than one revolution.
+   - The nonlinear form is continuous across the full circle, enabling smoother
+     optimization and gradient flow in DDP.
+
+3. **Cost Function**
+   - This linear model uses a purely quadratic cost:
+         L(x,u) = (x-x_goal)^T Q (x-x_goal) + u^T R u
+     without any explicit potential-energy shaping.
+   - The nonlinear model includes additional energy and damping terms
+     (e.g., energy_bias * (1-cosθ)) to encourage a natural swing-up motion.
+
+4. **Behavioral Outcome**
+   - The linear model can perform a successful swing-up using only the physics term
+     (gravity in the dynamics) and the quadratic cost, but it may overshoot or
+     stop short depending on initialization and tuning.
+   - The nonlinear version typically produces smoother, more physically realistic
+     swing-ups because it explicitly shapes the energy landscape in the cost.
+
+5. **Use Case**
+   - Linear-θ version: simpler, interpretable, suitable for quick testing or
+     analysis of angle-based control.
+   - Nonlinear version: better for stable convergence, visualization, and
+     experiments where continuous orientation tracking matters.
+"""
