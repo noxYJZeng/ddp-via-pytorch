@@ -7,7 +7,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = CartPoleEnv(
-        num_steps=400,
+        num_steps=500,
         dt=0.05,
         mp=0.1,
         mc=1.0,
@@ -18,8 +18,8 @@ if __name__ == "__main__":
 
     ddp = DDP(
         env,
-        eps=1e-3,
-        success_multiplier=0.7,
+        eps=5e-3,
+        success_multiplier=0.9,
         failure_multiplier=3.0,
         min_eps=1e-8,
         verbose=1,
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     init = torch.tensor([[0.0, 0.0, math.pi, 0.0]], dtype=torch.float32, device=device)
 
     # run optimization
-    actions, states = ddp.solve(init_state=init, num_iterations=100)
+    actions, states = ddp.solve(init_state=init, num_iterations=50)
     print("\n[DDP] Optimization done.")
     print("[Final theta (rad)]:", states[-1][0, 2].item())
 

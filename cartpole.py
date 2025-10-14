@@ -32,8 +32,8 @@ class CartPoleEnv:
         self.dtype = dtype
 
         #ddp required
-        self.state_dim = 4
-        self.control_dim = 1
+        self.state_dim = 4 #[x, x_dot, theta, theta_dot]
+        self.control_dim = 1 
         self.timesteps = torch.arange(self.num_steps, device=self.device, dtype=self.dtype)
 
         #Goal state: upright, centered, zero velocities
@@ -86,6 +86,8 @@ class CartPoleEnv:
             theta_dot + theta_ddot * self.dt,
         ], dim=1)
         return x_next
+
+
 
     #visualization
     def render_state(self, x, ax=None):
