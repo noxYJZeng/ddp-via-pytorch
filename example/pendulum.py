@@ -6,9 +6,7 @@ from ddp import DDP
 
 class PendulumSmoothDDP:
     """
-    The state is represented as:
-        x = [sin(θ), cos(θ), θ̇]
-    rather than [θ, θ̇].
+    The state is represented as x = [sin(θ), cos(θ), θ̇] rather than [θ, θ̇].
 
     This trigonometric encoding avoids the discontinuity and angle wrapping
     that occur when θ crosses ±π (for example, jumping from π to −π).
@@ -28,13 +26,13 @@ class PendulumSmoothDDP:
 
     Cost
     The cost function encourages:
-        - small angle error (via sin-cos difference)
-        - low control effort
-        - smooth changes in torque (uₜ - uₜ₋₁)² (Jacobian-safe approximation)
+        small angle error (via sin-cos difference)
+        low control effort
+        smooth changes in torque (uₜ - uₜ₋₁)² (Jacobian-safe approximation)
     """
 
     def __init__(self,
-                 num_steps=75,
+                 num_steps=200,
                  dt=0.05,
                  m=1.0,
                  L=1.0,
@@ -67,7 +65,6 @@ class PendulumSmoothDDP:
         self.R = 0.05 * torch.eye(1, device=self.device, dtype=self.dtype)
         self.Qf = 100.0 * torch.eye(3, device=self.device, dtype=self.dtype)
 
-        # Smooth control penalty coefficient
         self.smooth_weight = 0.05
 
     #Cost Functions
@@ -82,8 +79,6 @@ class PendulumSmoothDDP:
         base = err @ self.Q @ err.transpose(0, 1)
         control = u @ self.R @ u.transpose(0, 1)
 
-        # Smooth-control penalty (Jacobian-safe)
-        # A dummy 'prev_u' term prevents functorch from tracing mutable state.
         prev_u = torch.tanh(0.1 * (t - 1)) * 0.0  # placeholder to stabilize Jacobians
         smooth = self.smooth_weight * ((u - prev_u) ** 2)
 
@@ -181,16 +176,14 @@ class PendulumSmoothDDP:
         print(f"[Render] Saved GIF → {filename}")
 
 
-# Main Execution
 if __name__ == "__main__":
     env = PendulumSmoothDDP()
     ddp = DDP(env, eps=1e-3)
 
-    # Start from downward (θ = π)
+    # θ = π
     x0 = torch.tensor([[math.sin(math.pi), math.cos(math.pi), 0.0]], dtype=torch.float32)
     print("Optimizing smooth DDP swing-up...")
 
-    # Run DDP optimization
     U, X = ddp.solve(x0, num_iterations=60)
 
     traj = [x for x in X]

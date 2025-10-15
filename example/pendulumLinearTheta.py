@@ -14,12 +14,12 @@ class PendulumLinearTheta:
     """
 
     def __init__(self,
-                 num_steps=100,
+                 num_steps=200,
                  dt=0.05,
                  m=1.0,
                  L=1.0,
                  g=9.80665,
-                 torque_max=5.0,
+                 torque_max=10.0,
                  device=None,
                  dtype=torch.float32):
         self.num_steps = num_steps
@@ -72,7 +72,6 @@ class PendulumLinearTheta:
         θ̇_next = θ̇ + θ̈ * self.dt
         return torch.cat([θ_next, θ̇_next], dim=1)
 
-    # Rollout simulation
     def simulate(self, x0, policy_fn):
         x = x0.clone()
         traj = [x.clone()]
@@ -82,7 +81,6 @@ class PendulumLinearTheta:
             traj.append(x.clone())
         return traj
 
-    # Rendering
     def render_state(self, x, ax=None):
         if isinstance(x, torch.Tensor):
             x = x.detach().cpu().numpy().flatten()
@@ -116,7 +114,6 @@ class PendulumLinearTheta:
         plt.close(fig)
         print(f"[Render] Saved GIF → {filename}")
 
-# Main
 if __name__ == "__main__":
     env = PendulumLinearTheta()
     ddp = DDP(env, eps=1e-3)
